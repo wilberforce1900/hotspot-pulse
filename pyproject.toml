@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dsh-hotspot-predictor"
+version = "0.1.0"
+description = "HotSpot Pulse — 热点流量预测与情绪分析系统（离线 MOCK 预演）"
+readme = "README.md"
+requires-python = ">=3.10"
+keywords = ["hotspot", "trend-prediction", "sentiment", "network-graph"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+    "Typing :: Typed",
+]
+# 纯标准库，零第三方依赖（离线可跑）
+dependencies = []
+
+[project.scripts]
+hotspot = "main:main"
+
+[tool.setuptools]
+py-modules = ["models", "config", "main"]
+packages = ["stages"]

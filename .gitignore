@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+build/
+dist/
+*.egg
+
+# 运行产物
+out/
+*.svg
+
+# 虚拟环境
+.venv/
+venv/
+env/
+
+# 系统 / 工具
+.DS_Store
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# 密钥 / 本地配置
+.env
+*.pem
+config.local.json
