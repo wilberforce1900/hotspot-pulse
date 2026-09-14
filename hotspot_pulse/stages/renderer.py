@@ -17,8 +17,8 @@ import math
 import os
 from xml.sax.saxutils import escape
 
-from config import RenderConfig
-from models import HotspotGraph, LayoutHint, RegionGraph, TopicGraph
+from hotspot_pulse.config import RenderConfig
+from hotspot_pulse.models import HotspotGraph, LayoutHint, RegionGraph, TopicGraph
 
 # YlOrRd 三锚点：0.0 黄 → 0.5 橙 → 1.0 红
 _ANCHORS = [(0.0, (255, 255, 178)), (0.5, (253, 141, 60)), (1.0, (189, 0, 38))]

@@ -13,7 +13,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from models import DataSource, PredictorKind, Query
+from hotspot_pulse.models import DataSource, PredictorKind, Query
 
 # --------------------------------------------------------------------------- #
 # 安全过滤：命中即拒绝（绝不透传给下游子代理）

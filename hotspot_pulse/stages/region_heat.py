@@ -18,8 +18,8 @@ from __future__ import annotations
 import hashlib
 from collections import Counter, defaultdict
 
-from config import RegionMapperConfig
-from models import Post, RegionEdge, RegionGraph, RegionNode
+from hotspot_pulse.config import RegionMapperConfig
+from hotspot_pulse.models import Post, RegionEdge, RegionGraph, RegionNode
 
 _DEFAULT_POOL = ["中国", "美国", "日本", "欧洲"]
 

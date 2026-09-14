@@ -15,9 +15,14 @@ models.py — HotSpot Pulse 统一数据契约（数据层 / 地基）。
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
+
+
+def _utcnow() -> datetime:
+    """timezone-aware UTC 当前时间（datetime.utcnow 已弃用，naive 时间无法做时区运算）。"""
+    return datetime.now(timezone.utc)
 
 
 # --------------------------------------------------------------------------- #
@@ -109,7 +114,7 @@ class Post:
 class CollectResult:
     """采集层返回：Post 列表 + 元信息。"""
     posts: list[Post] = field(default_factory=list)
-    fetched_at: datetime = field(default_factory=datetime.utcnow)
+    fetched_at: datetime = field(default_factory=_utcnow)
     errors: list[str] = field(default_factory=list)   # 各源失败/降级信息
     deduped: int = 0                    # 去重丢弃条数
 
@@ -140,7 +145,7 @@ class TopicGraph:
     """阶段2 产出：话题网络（用于热力网图中的「话题子图」与关联展示）。"""
     nodes: dict[str, Topic] = field(default_factory=dict)   # name -> Topic
     edges: list[RelatedEdge] = field(default_factory=list)
-    as_of: datetime = field(default_factory=datetime.utcnow)
+    as_of: datetime = field(default_factory=_utcnow)
 
 
 # --------------------------------------------------------------------------- #

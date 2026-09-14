@@ -14,7 +14,7 @@ import hashlib
 import random
 from datetime import datetime, timedelta, timezone
 
-from models import CollectResult, DataSource, Post, Query
+from hotspot_pulse.models import CollectResult, DataSource, Post, Query
 
 # --------------------------------------------------------------------------- #
 # 共享情绪词典（与 sentiment.py 阶段一致，保证下游情绪分析可确定复现）

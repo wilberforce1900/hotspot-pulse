@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 
-from models import EmotionKind, Post, Sentiment, SentimentAgg, SentimentLabel
+from hotspot_pulse.models import EmotionKind, Post, Sentiment, SentimentAgg, SentimentLabel
 
 # --------------------------------------------------------------------------- #
 # 共享情绪词典（与 collector.py 阶段一致）

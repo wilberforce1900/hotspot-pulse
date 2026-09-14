@@ -18,8 +18,7 @@ classifiers = [
 dependencies = []
 
 [project.scripts]
-hotspot = "main:main"
+hotspot = "hotspot_pulse.cli:main"
 
 [tool.setuptools]
-py-modules = ["models", "config", "main"]
-packages = ["stages"]
+packages = ["hotspot_pulse", "hotspot_pulse.stages"]

@@ -10,13 +10,35 @@
 
 ```bash
 cd dsh-hotspot-predictor
-python main.py "AI芯片 24小时 中国"      # 直接跑（默认 MOCK + LINEAR，零依赖）
+python main.py "AI芯片 24小时 中国"          # 直接跑（默认 MOCK + LINEAR，零依赖）
+python -m hotspot_pulse.cli "AI芯片"        # 等价的模块方式调用
 # 或安装为命令：
 pip install . && hotspot "AI芯片"
+
+# 运行测试（纯标准库 unittest，pytest 亦兼容）：
+python -m unittest discover -s tests -v
 ```
 
 - 输出：终端打印汇总报告（关联话题 / 增长预测 / 情绪分布 / 区域热度），并在 `out/` 生成 `hotspot.svg` 热力网图。
 - 纯标准库，无网络、无第三方依赖即可端到端跑通。
+
+---
+
+## 0. 目录结构
+
+```
+dsh-hotspot-predictor/
+├── main.py                    # 兼容薄壳入口（转发到 hotspot_pulse.cli）
+├── pyproject.toml             # 打包配置（pip install . → hotspot 命令）
+├── hotspot_pulse/             # 主包
+│   ├── __init__.py            # 公共 API：run_pipeline / load_config
+│   ├── cli.py                 # 命令行入口（argparse + --config）
+│   ├── models.py              # 统一数据契约（dataclass 地基）
+│   ├── config.py              # 配置加载（适配器/策略选择器）
+│   └── stages/                # 流水线各阶段（委派单元，见下表）
+├── tests/                     # 单元测试（unittest，覆盖各阶段 + 端到端）
+└── out/                       # 运行产物（gitignore）
+```
 
 ---
 
@@ -91,14 +113,14 @@ pip install . && hotspot "AI芯片"
 
 | 阶段 | 模块文件 | 负责 | 输入 | 输出 | 是否核心逻辑 |
 |---|---|---|---|---|---|
-| 0 | `input_parser.py` | **V4 Pro 亲自** | 原始用户输入 | `Query` | 是（含安全过滤） |
-| 1 | `collector.py` | senior-coder | `Query` | `Post[]` | 否（重但机械） |
-| 2 | `topic_graph.py` | general-reasoner + senior-coder | `Post[]` | `TopicGraph` | 否（语义聚类可委派） |
-| 3 | `sentiment.py` | general-reasoner / multimodal-operator | `Post[]` | `SentimentAgg` | 否（可委派） |
-| 4 | `growth.py` | senior-coder(建模) + **V4 Pro 把关** | 时序数据 | `Prediction[]` | **是（V4 Pro 审定算法）** |
-| 5 | `region_heat.py` | general-reasoner + senior-coder | `Post[]`+地理 | `RegionGraph` | 否 |
-| 6 | `renderer.py` | visual-analyst | 各图 | `HotspotGraph`(PNG/SVG) | 否（图表专长） |
-| 7 | `report.py`/orchestrator | **V4 Pro 亲自** | 所有中间结果 | 最终报告 | 是（拍板/审核） |
+| 0 | `hotspot_pulse/stages/input_parser.py` | **V4 Pro 亲自** | 原始用户输入 | `Query` | 是（含安全过滤） |
+| 1 | `hotspot_pulse/stages/collector.py` | senior-coder | `Query` | `Post[]` | 否（重但机械） |
+| 2 | `hotspot_pulse/stages/topic_graph.py` | general-reasoner + senior-coder | `Post[]` | `TopicGraph` | 否（语义聚类可委派） |
+| 3 | `hotspot_pulse/stages/sentiment.py` | general-reasoner / multimodal-operator | `Post[]` | `SentimentAgg` | 否（可委派） |
+| 4 | `hotspot_pulse/stages/growth.py` | senior-coder(建模) + **V4 Pro 把关** | 时序数据 | `Prediction[]` | **是（V4 Pro 审定算法）** |
+| 5 | `hotspot_pulse/stages/region_heat.py` | general-reasoner + senior-coder | `Post[]`+地理 | `RegionGraph` | 否 |
+| 6 | `hotspot_pulse/stages/renderer.py` | visual-analyst | 各图 | `HotspotGraph`(PNG/SVG) | 否（图表专长） |
+| 7 | `hotspot_pulse/stages/orchestrator.py` | **V4 Pro 亲自** | 所有中间结果 | 最终报告 | 是（拍板/审核） |
 
 **委派原则（对齐 V4 Pro 总指挥 persona）：**
 - 阶段 0、4 的**算法决策与安全边界**、阶段 7 的**最终审核** → V4 Pro 亲自，省 Token 且保安全。
@@ -107,7 +129,7 @@ pip install . && hotspot "AI芯片"
 
 ---
 
-## 4. 统一数据契约（见 `models.py`）
+## 4. 统一数据契约（见 `hotspot_pulse/models.py`）
 
 阶段之间**只通过数据契约交互**（dataclass），不共享内部状态。这是让子代理**并行开发互不阻塞**的关键：
 
@@ -124,7 +146,7 @@ pip install . && hotspot "AI芯片"
 
 ---
 
-## 5. V4 Pro 总指挥调度流（见 `orchestrator.py`）
+## 5. V4 Pro 总指挥调度流（见 `hotspot_pulse/stages/orchestrator.py`）
 
 ```
 1. 收用户输入 → 阶段0：解析 + 安全过滤（防注入）→ Query
@@ -142,7 +164,7 @@ pip install . && hotspot "AI芯片"
 
 ---
 
-## 6. 配置（见 `config.py`）
+## 6. 配置（见 `hotspot_pulse/config.py`）
 
 - 数据源适配器（`data_source: social_api | search | mock`）
 - 时间窗（`window_hours`、`prediction_horizon_hours`）
@@ -164,10 +186,10 @@ pip install . && hotspot "AI芯片"
 
 ## 8. 预演分工建议（启动顺序）
 
-1. **V4 Pro** 先定 `models.py`（契约是地基，谁也不许先改）。← 地基
-2. `config.py` + `input_parser.py`（V4 Pro / lightweight-assistant）。
-3. `collector.py`（senior-coder）→ 出 `Post[]`。
-4. `topic_graph.py` / `sentiment.py` / `region_heat.py`（general-reasoner + senior-coder，三者并行）。
-5. `growth.py`（senior-coder 草稿 → V4 Pro 审定算法）。
-6. `renderer.py`（visual-analyst）。
-7. `orchestrator.py` + `report`（V4 Pro）串联 + 端到端验证。
+1. **V4 Pro** 先定 `hotspot_pulse/models.py`（契约是地基，谁也不许先改）。← 地基
+2. `hotspot_pulse/config.py` + `hotspot_pulse/stages/input_parser.py`（V4 Pro / lightweight-assistant）。
+3. `hotspot_pulse/stages/collector.py`（senior-coder）→ 出 `Post[]`。
+4. `hotspot_pulse/stages/topic_graph.py` / `sentiment.py` / `region_heat.py`（general-reasoner + senior-coder，三者并行）。
+5. `hotspot_pulse/stages/growth.py`（senior-coder 草稿 → V4 Pro 审定算法）。
+6. `hotspot_pulse/stages/renderer.py`（visual-analyst）。
+7. `hotspot_pulse/stages/orchestrator.py` + 报告合成（V4 Pro）串联 + 端到端验证。

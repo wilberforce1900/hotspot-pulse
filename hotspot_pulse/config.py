@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 
-from models import DataSource, LayoutAlgo, PredictorKind
+from hotspot_pulse.models import DataSource, LayoutAlgo, PredictorKind
 
 
 @dataclass(slots=True)

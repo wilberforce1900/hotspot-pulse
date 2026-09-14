@@ -20,10 +20,10 @@ from __future__ import annotations
 
 import asyncio
 
-from config import Config, default_mock_config
-from models import PipelineResult, Query, RegionGraph, Sentiment, SentimentAgg, TopicGraph
-from stages import collector, growth, region_heat, renderer, sentiment, topic_graph
-from stages.input_parser import _security_scan, parse_user_input, sanitize_for_delegation
+from hotspot_pulse.config import Config, default_mock_config
+from hotspot_pulse.models import PipelineResult, Query, RegionGraph, Sentiment, SentimentAgg, TopicGraph
+from hotspot_pulse.stages import collector, growth, region_heat, renderer, sentiment, topic_graph
+from hotspot_pulse.stages.input_parser import _security_scan, parse_user_input, sanitize_for_delegation
 
 # 阶段名 → 处理函数（预演=本地直调；正式版替换为 subagent 派发）
 _STAGE_HANDLERS = {
@@ -101,7 +101,7 @@ def finalize(
     query: Query,
     topic: TopicGraph | None,
     senti: SentimentAgg | None,
-    growth: list,
+    predictions: list,
     region: RegionGraph | None,
     graph,
     warnings: list[str] | None = None,
@@ -116,8 +116,8 @@ def finalize(
         missing = [r for r in query.regions if r not in region.nodes]
         if missing:
             warnings.append(f"限定地域无数据（已降级标注）：{', '.join(missing)}")
-    if growth and topic is not None:
-        unknown_topics = [p.topic for p in growth if p.topic not in topic.nodes]
+    if predictions and topic is not None:
+        unknown_topics = [p.topic for p in predictions if p.topic not in topic.nodes]
         if unknown_topics:
             warnings.append(f"预测话题未出现在话题图中：{', '.join(unknown_topics[:5])}")
 
@@ -127,14 +127,15 @@ def finalize(
         if hit:
             warnings.append(f"安全审核拦截下游产物[{label}]：{hit}")
 
-    summary = _build_summary(query, posts_count=0, topic=topic, senti=senti,
-                             growth=growth, region=region, graph=graph, warnings=warnings)
+    summary = _build_summary(query, topic=topic, senti=senti,
+                             predictions=predictions, region=region, graph=graph,
+                             warnings=warnings)
 
     return PipelineResult(
         query=query,
         topic_graph=topic,
         sentiment=senti,
-        predictions=growth,
+        predictions=predictions,
         region_graph=region,
         hotspot_graph=graph,
         summary=summary,
@@ -162,7 +163,7 @@ def _fmt_sentiment(s: Sentiment | None) -> str:
     return f"{s.label.value}(正{s.positive:.0%}/负{s.negative:.0%}/中{s.neutral:.0%})"
 
 
-def _build_summary(query, posts_count, topic, senti, growth, region, graph, warnings) -> str:
+def _build_summary(query, topic, senti, predictions, region, graph, warnings) -> str:
     lines = [
         f"# 热点预测报告 · tag「{query.tag}」",
         f"- 窗口：回溯 {query.window_hours}h / 预测 {query.horizon_hours}h / "
@@ -178,8 +179,8 @@ def _build_summary(query, posts_count, topic, senti, growth, region, graph, warn
         lines.append("- 关联话题：无数据")
 
     # 增长预测
-    if growth:
-        top = growth[0]
+    if predictions:
+        top = predictions[0]
         tail_vol = top.predicted_volume[-1] if top.predicted_volume else 0.0
         sig = top.signal
         signal_txt = ""
@@ -191,8 +192,8 @@ def _build_summary(query, posts_count, topic, senti, growth, region, graph, warn
             f"- 增长预测：热度最高话题「{top.topic}」，未来末期量约 {tail_vol:.1f}，"
             f"置信度 {top.confidence:.0%}{signal_txt}"
         )
-        if len(growth) > 1:
-            lines.append(f"  （共 {len(growth)} 个话题有预测）")
+        if len(predictions) > 1:
+            lines.append(f"  （共 {len(predictions)} 个话题有预测）")
     else:
         lines.append("- 增长预测：无数据")
 

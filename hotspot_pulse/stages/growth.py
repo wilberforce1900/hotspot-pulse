@@ -20,8 +20,8 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import timedelta
 
-from config import PredictorConfig
-from models import HeatRecord, Post, Prediction, PredictorKind, TrendSignal
+from hotspot_pulse.config import PredictorConfig
+from hotspot_pulse.models import HeatRecord, Post, Prediction, PredictorKind, TrendSignal
 
 
 def predict_growth(posts: list[Post], cfg: PredictorConfig, horizon_hours: int) -> list[Prediction]:

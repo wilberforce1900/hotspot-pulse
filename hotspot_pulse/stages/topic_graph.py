@@ -14,7 +14,7 @@ import re
 from collections import Counter
 from datetime import datetime, timezone
 
-from models import Post, RelatedEdge, Topic, TopicGraph
+from hotspot_pulse.models import Post, RelatedEdge, Topic, TopicGraph
 
 _HASHTAG_PATTERN = re.compile(r"[#@](\S+)")
 _TOP_K = 8  # 关联话题数量上限
