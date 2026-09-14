@@ -1,4 +1,4 @@
-"""tests/test_growth.py — 阶段4 时序聚合、线性预测与破点检测。"""
+"""tests/test_growth.py — 阶段4 时序聚合、缺桶补零、预测器与破点检测。"""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from hotspot_pulse.config import PredictorConfig
 from hotspot_pulse.models import DataSource, HeatRecord, Post, PredictorKind
 from hotspot_pulse.stages.growth import (
     _detect_signal,
+    _forecast_damped,
     _forecast_linear,
     _to_heat_series,
     predict_growth,
@@ -57,26 +58,66 @@ class TestToHeatSeries(unittest.TestCase):
         self.assertEqual(scores[("B", 1)], 1.0)   # B 唯一桶即峰值
         self.assertEqual(scores[("A", 2)], 0.5)   # 2 点中 1 点
 
+    def test_gap_buckets_filled_with_zero(self):
+        # 话题只在第 0 和第 3 小时有数据 → 中间 2 个缺桶必须补零（等距时序）
+        posts = [make_post(0, 0, ["G"]), make_post(1, 3, ["G"])]
+        records = _to_heat_series(posts)
+        self.assertEqual(len(records), 4)
+        volumes = [r.volume for r in records]
+        self.assertEqual(volumes, [1, 0, 0, 1])
+        # 等距校验：相邻桶时间差恒为 1 小时
+        for prev, cur in zip(records, records[1:]):
+            self.assertEqual(cur.ts - prev.ts, timedelta(hours=1))
+
 
 class TestForecastLinear(unittest.TestCase):
     def test_rising_series_positive_slope(self):
-        predicted, confidence = _forecast_linear(make_series([1, 2, 3, 4, 5, 6]), 3)
+        predicted, confidence, _, ci_high = _forecast_linear(make_series([1, 2, 3, 4, 5, 6]), 3)
         self.assertTrue(all(b > a for a, b in zip(predicted, predicted[1:])))
         self.assertGreater(predicted[0], 6)  # 延续上升趋势
         self.assertAlmostEqual(confidence, 1.0, places=6)  # 完美线性 R²=1
+        self.assertTrue(all(h >= p for p, h in zip(predicted, ci_high)))  # 区间覆盖中心
 
     def test_flat_series_zero_growth(self):
-        predicted, _ = _forecast_linear(make_series([3, 3, 3, 3]), 2)
+        predicted, _, _, _ = _forecast_linear(make_series([3, 3, 3, 3]), 2)
         self.assertEqual(predicted, [3.0, 3.0])
 
     def test_insufficient_samples(self):
-        predicted, confidence = _forecast_linear(make_series([1]), 3)
+        predicted, confidence, ci_low, ci_high = _forecast_linear(make_series([1]), 3)
         self.assertEqual(predicted, [0.0, 0.0, 0.0])
         self.assertEqual(confidence, 0.0)
+        self.assertEqual((ci_low, ci_high), ([0.0] * 3, [0.0] * 3))
 
     def test_prediction_never_negative(self):
-        predicted, _ = _forecast_linear(make_series([10, 6, 2]), 5)
+        predicted, _, ci_low, _ = _forecast_linear(make_series([10, 6, 2]), 5)
         self.assertTrue(all(v >= 0.0 for v in predicted))
+        self.assertTrue(all(v >= 0.0 for v in ci_low))
+
+
+class TestForecastDamped(unittest.TestCase):
+    def test_rising_series_increment_decays(self):
+        predicted, _, _, _ = _forecast_damped(make_series([1, 2, 3, 4, 5, 6]), 6)
+        increments = [b - a for a, b in zip(predicted, predicted[1:])]
+        self.assertTrue(all(i > 0 for i in increments))       # 仍在上升
+        self.assertTrue(all(b <= a for a, b in zip(increments, increments[1:])))  # 增量逐级衰减
+
+    def test_long_horizon_converges_to_plateau(self):
+        predicted, _, _, _ = _forecast_damped(make_series([1, 3, 5, 7, 9, 11]), 48)
+        tail = predicted[-6:]
+        spread = max(tail) - min(tail)
+        self.assertLess(spread, 0.5)  # 远端收敛到平台，不发散
+
+    def test_confidence_band_covers_center_and_widens(self):
+        predicted, _, ci_low, ci_high = _forecast_damped(make_series([2, 1, 4, 3, 6, 5]), 4)
+        for p, lo, hi in zip(predicted, ci_low, ci_high):
+            self.assertLessEqual(lo, p)
+            self.assertGreaterEqual(hi, p)
+        widths = [h - lo for lo, h in zip(ci_low, ci_high)]
+        self.assertTrue(all(b >= a for a, b in zip(widths, widths[1:])))  # 区间随视野变宽
+
+    def test_declining_series_still_declines(self):
+        predicted, _, _, _ = _forecast_damped(make_series([9, 7, 5, 3, 1]), 3)
+        self.assertTrue(all(b <= a for a, b in zip(predicted, predicted[1:])))
 
 
 class TestDetectSignal(unittest.TestCase):
@@ -120,7 +161,7 @@ class TestPredictGrowth(unittest.TestCase):
         )
         preds = predict_growth(posts, cfg, horizon_hours=2)
         self.assertEqual(len(preds), 1)
-        _, raw_conf = _forecast_linear(make_series([1, 2, 3]), 2)
+        raw_conf = _forecast_linear(make_series([1, 2, 3]), 2)[1]
         self.assertGreater(raw_conf, 0)
         self.assertAlmostEqual(preds[0].confidence, raw_conf * 0.5)
 
@@ -128,6 +169,19 @@ class TestPredictGrowth(unittest.TestCase):
         posts = [make_post(i, i % 6, ["话题"]) for i in range(12)]
         preds = predict_growth(posts, PredictorConfig(kind=PredictorKind.LINEAR), 3)
         self.assertEqual(preds[0].model, PredictorKind.LINEAR)
+
+    def test_damped_is_default(self):
+        posts = [make_post(i, i % 6, ["话题"]) for i in range(12)]
+        preds = predict_growth(posts, PredictorConfig(), 3)
+        self.assertEqual(preds[0].model, PredictorKind.DAMPED)
+
+    def test_bands_len_matches_horizon(self):
+        posts = [make_post(i, i % 6, ["话题"]) for i in range(12)]
+        preds = predict_growth(posts, PredictorConfig(), 5)
+        for p in preds:
+            self.assertEqual(len(p.ci_low), 5)
+            self.assertEqual(len(p.ci_high), 5)
+            self.assertEqual(len(p.ci_low), len(p.predicted_volume))
 
 
 if __name__ == "__main__":

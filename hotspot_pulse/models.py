@@ -56,7 +56,8 @@ class DataSource(str, Enum):
 
 class PredictorKind(str, Enum):
     """增长预测算法标识（策略模式，可插拔）。"""
-    LINEAR = "linear"        # 线性趋势，最省/最快
+    DAMPED = "damped"        # 阻尼趋势（damped linear）：热点 S 形演化的廉价近似，默认
+    LINEAR = "linear"        # 无阻尼线性趋势，最省/最快
     ARIMA = "arima"
     PROPHET = "prophet"
     LSTM = "lstm"            # 最贵，需数据量足够
@@ -85,8 +86,8 @@ class Query:
     include_sentiment: bool = True      # 是否需要情绪分析
     include_images: bool = False        # 是否有多模态（图片）需要分析
     data_source: DataSource = DataSource.MOCK  # 采集源（预演默认 mock）
-    predictor: PredictorKind = PredictorKind.LINEAR  # 预测算法（预演默认最省）
-    confidence_threshold: float = 0.7   # 预测置信度下限
+    predictor: PredictorKind = PredictorKind.DAMPED  # 预测算法（预演默认阻尼趋势）
+    confidence_threshold: float = 0.7   # 预测置信度下限（低于则在报告标记+告警）
 
 
 # --------------------------------------------------------------------------- #
@@ -200,9 +201,11 @@ class Prediction:
     horizon_hours: int
     predicted_volume: list[float]       # 每个未来小时预测量
     forecast: list[tuple[datetime, float]] = field(default_factory=list)  # (时间, 预测量)
-    confidence: float = 0.0             # 0~1
+    confidence: float = 0.0             # 0~1（拟合 R²，含样本不足折扣）
     signal: Optional[TrendSignal] = None
-    model: PredictorKind = PredictorKind.LINEAR
+    model: PredictorKind = PredictorKind.DAMPED
+    ci_low: list[float] = field(default_factory=list)   # 80% 置信区间下界（与 predicted_volume 等长）
+    ci_high: list[float] = field(default_factory=list)  # 80% 置信区间上界
 
 
 # --------------------------------------------------------------------------- #

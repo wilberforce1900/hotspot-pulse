@@ -16,9 +16,16 @@ hotspot_pulse — HotSpot Pulse 热点流量预测与情绪分析系统（离线
     orchestrator.py  —— 阶段0+7 调度与最终审核
 """
 
+from __future__ import annotations
+
+import logging
+
 from hotspot_pulse.config import Config, load_config
 from hotspot_pulse.models import PipelineResult, Query
 from hotspot_pulse.stages.orchestrator import run_pipeline
+
+# 库入口挂 NullHandler：不打无主日志，由应用（cli.py / 测试）决定日志落点
+logging.getLogger(__name__).addHandler(logging.NullHandler())
 
 __version__ = "0.1.0"
 

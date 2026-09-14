@@ -10,21 +10,27 @@ stages/topic_graph.py — 阶段2：关联话题发现。
 
 from __future__ import annotations
 
+import logging
 import re
 from collections import Counter
 from datetime import datetime, timezone
 
 from hotspot_pulse.models import Post, RelatedEdge, Topic, TopicGraph
 
+logger = logging.getLogger(__name__)
+
 _HASHTAG_PATTERN = re.compile(r"[#@](\S+)")
 _TOP_K = 8  # 关联话题数量上限
 
 
-def build_topic_graph(posts: list[Post], seed_tag: str) -> TopicGraph:
+def build_topic_graph(posts: list[Post], seed_tag: str,
+                      related_terms: list[str] | None = None) -> TopicGraph:
     """核心：从 Post 流构建话题网络。
 
     - 以 seed_tag 为主节点。
-    - 共现：post.tags 含 seed_tag 时，其余 tag 的共现计数 +1。
+    - 话题来源优先级：post.tags 为主；tags 为空时回退提取正文 #hashtag。
+    - 用户指定的 related_terms 出现过时强制纳入节点（不被 TOP_K 挤掉）。
+    - 共现：post 含 seed_tag 时，其余 tag 的共现计数 +1。
     - weight = 0.7 × (cooccurrence/max_cooccurrence) + 0.3 × semantic_similarity，夹 [0,1]。
     - 共现为 0 但语义相似 > 0.35 的边也保留（语义兜底）。
     """
@@ -35,7 +41,7 @@ def build_topic_graph(posts: list[Post], seed_tag: str) -> TopicGraph:
     tag_counts: Counter[str] = Counter()
     all_tags: set[str] = set()
     for post in posts:
-        for tag in post.tags:
+        for tag in _post_tags(post):
             tag_counts[tag] += 1
             all_tags.add(tag)
 
@@ -49,16 +55,20 @@ def build_topic_graph(posts: list[Post], seed_tag: str) -> TopicGraph:
 
     cooc: Counter[str] = Counter()
     for post in posts:
-        if seed_tag not in post.tags:
+        if seed_tag not in _post_tags(post):
             continue
-        for tag in post.tags:
+        for tag in _post_tags(post):
             if tag != seed_tag:
                 cooc[tag] += 1
 
     top_topics = [t for t, _ in cooc.most_common(_TOP_K)]
+    # 用户指定的关联词出现过 → 强制纳入（用户意图优先于自动排序）
+    user_terms = [t for t in (related_terms or [])
+                  if t and t != seed_tag and t in all_tags and t not in top_topics]
+    top_topics.extend(user_terms)
     # 不足 top_k 时，按出现频次从高到低有序补足（确定性，不用 set.pop()）
     remaining = sorted((all_tags - {seed_tag}) - set(top_topics), key=lambda t: -tag_counts[t])
-    top_topics.extend(remaining[:_TOP_K - len(top_topics)])
+    top_topics.extend(remaining[:max(0, _TOP_K - len(top_topics))])
 
     for t in top_topics:
         if t not in nodes:
@@ -83,19 +93,15 @@ def build_topic_graph(posts: list[Post], seed_tag: str) -> TopicGraph:
         if weight > 0.0:
             edges.append(RelatedEdge(from_topic=seed_tag, to_topic=t, weight=weight, cooccurrence=c))
 
+    logger.info("话题图构建完成：%d 节点 / %d 边（seed=%s）", len(nodes), len(edges), seed_tag)
     return TopicGraph(nodes=nodes, edges=edges, as_of=datetime.now(timezone.utc))
 
 
-def _extract_tags(posts: list[Post]) -> list[str]:
-    """从 Post.tags 与正文规整话题名（去 #/@、Latin 小写、按频次降序去重）。"""
-    counter: Counter[str] = Counter()
-    for post in posts:
-        tags = post.tags or [m.group(1) for m in _HASHTAG_PATTERN.finditer(post.text)]
-        for tag in tags:
-            tag = tag.strip().lstrip("#@").lower()
-            if tag:
-                counter[tag] += 1
-    return [t for t, _ in counter.most_common()]
+def _post_tags(post: Post) -> list[str]:
+    """单条 Post 的话题词：优先 post.tags，为空时回退提取正文 #hashtag/@提及。"""
+    if post.tags:
+        return post.tags
+    return [m.group(1).lstrip("#@") for m in _HASHTAG_PATTERN.finditer(post.text or "")]
 
 
 def _semantic_similarity(a: str, b: str) -> float:

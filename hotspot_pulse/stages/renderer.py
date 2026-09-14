@@ -59,8 +59,8 @@ def render_network(region: RegionGraph, topics: TopicGraph, cfg: RenderConfig) -
     for name, node in (region.nodes or {}).items():
         node_items.append(("region", name, node.heat_score, node.post_count))
     if combine:
-        for name, node in (topics.nodes or {}).items():
-            node_items.append(("topic", name, node.heat_score, node.post_count))
+        for t_name, t_node in (topics.nodes or {}).items():
+            node_items.append(("topic", t_name, t_node.heat_score, t_node.post_count))
 
     n = len(node_items)
     width = int(cfg.width * 96)
@@ -80,7 +80,7 @@ def render_network(region: RegionGraph, topics: TopicGraph, cfg: RenderConfig) -
                  f'viewBox="0 0 {width} {height}" xmlns="http://www.w3.org/2000/svg">')
     parts.append('<rect width="100%" height="100%" fill="#ffffff"/>')
     parts.append('<text x="12" y="20" font-family="sans-serif" font-size="14" fill="#333">'
-                 f'Hotspot · 实心=区域 / 空心=话题</text>')
+                 'Hotspot · 实心=区域 / 空心=话题</text>')
 
     # 边（先画）
     def draw_edge(kind: str, src: str, dst: str, weight: float) -> None:
@@ -95,8 +95,8 @@ def render_network(region: RegionGraph, topics: TopicGraph, cfg: RenderConfig) -
     for e in (region.edges or []):
         draw_edge("region", e.from_region, e.to_region, e.weight)
     if combine:
-        for e in (topics.edges or []):
-            draw_edge("topic", e.from_topic, e.to_topic, e.weight)
+        for te in (topics.edges or []):
+            draw_edge("topic", te.from_topic, te.to_topic, te.weight)
 
     # 节点
     nodes_data: list[dict] = []
@@ -123,9 +123,9 @@ def render_network(region: RegionGraph, topics: TopicGraph, cfg: RenderConfig) -
         edges_data.append({"kind": "region", "source": e.from_region,
                            "target": e.to_region, "weight": round(e.weight, 4)})
     if combine:
-        for e in (topics.edges or []):
-            edges_data.append({"kind": "topic", "source": e.from_topic,
-                               "target": e.to_topic, "weight": round(e.weight, 4)})
+        for te in (topics.edges or []):
+            edges_data.append({"kind": "topic", "source": te.from_topic,
+                               "target": te.to_topic, "weight": round(te.weight, 4)})
 
     if n == 0:
         parts.append('<text x="50%" y="50%" text-anchor="middle" font-family="sans-serif" '

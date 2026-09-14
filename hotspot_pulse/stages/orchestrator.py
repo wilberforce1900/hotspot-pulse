@@ -19,14 +19,26 @@ stages/orchestrator.py — 阶段0+7：V4 Pro 总指挥调度与最终审核。
 from __future__ import annotations
 
 import asyncio
+import logging
+from collections.abc import Callable
 
 from hotspot_pulse.config import Config, default_mock_config
-from hotspot_pulse.models import PipelineResult, Query, RegionGraph, Sentiment, SentimentAgg, TopicGraph
+from hotspot_pulse.models import (
+    HotspotGraph,
+    PipelineResult,
+    Query,
+    RegionGraph,
+    Sentiment,
+    SentimentAgg,
+    TopicGraph,
+)
 from hotspot_pulse.stages import collector, growth, region_heat, renderer, sentiment, topic_graph
 from hotspot_pulse.stages.input_parser import _security_scan, parse_user_input, sanitize_for_delegation
 
+logger = logging.getLogger(__name__)
+
 # 阶段名 → 处理函数（预演=本地直调；正式版替换为 subagent 派发）
-_STAGE_HANDLERS = {
+_STAGE_HANDLERS: dict[str, Callable[..., object]] = {
     "collector": collector.collect,
     "topic_graph": topic_graph.build_topic_graph,
     "sentiment": sentiment.analyze_sentiment,
@@ -46,10 +58,31 @@ async def dispatch(stage: str, *args, **kwargs):
     return await asyncio.to_thread(handler, *args, **kwargs)
 
 
-async def run_pipeline(raw_input: str, cfg: Config | None = None) -> PipelineResult:
+async def dispatch_guarded(stage: str, warnings: list[str], degrade: Callable[[], object],
+                           *args, **kwargs):
+    """错误隔离地委派一个阶段：失败不拖垮整体，降级 + 告警（README §7 口径）。"""
+    try:
+        return await dispatch(stage, *args, **kwargs)
+    except Exception as exc:  # noqa: BLE001 — 阶段边界就是隔离带，任何异常都降级
+        logger.exception("阶段 %s 执行失败，已降级", stage)
+        warnings.append(f"阶段 {stage} 异常降级：{type(exc).__name__}: {exc}")
+        return degrade()
+
+
+async def _sentiment_stage(query: Query, posts, warnings: list[str]):
+    """阶段3 按 include_sentiment 开关派发（此前该配置被无视，stage 总是运行）。"""
+    if not query.include_sentiment:
+        return None
+    return await dispatch_guarded("sentiment", warnings, lambda: None,
+                                  posts, query.include_images)
+
+
+async def run_pipeline(raw_input: str, cfg: Config | None = None,
+                       now=None) -> PipelineResult:
     """端到端调度主入口（V4 Pro 亲自）。
 
     流程：解析→安全过滤→采集→（话题/情绪/区域并行）→增长→渲染→汇总审核。
+    now：注入时钟（传给采集层锚定 mock 窗口），缺省当前 UTC；测试可固定以完全复现。
     """
     if cfg is None:
         cfg = default_mock_config()
@@ -74,24 +107,28 @@ async def run_pipeline(raw_input: str, cfg: Config | None = None) -> PipelineRes
     warnings: list[str] = list(parsed.warnings)
 
     # ---- 阶段1：采集（senior-coder）----
-    collect_res = await dispatch("collector", query)
-    posts = collect_res.posts
-    warnings.extend(collect_res.errors)
+    collect_res = await dispatch_guarded("collector", warnings, lambda: None, query, now)
+    posts = collect_res.posts if collect_res is not None else []
+    warnings.extend(collect_res.errors if collect_res is not None else [])
     if not posts:
         warnings.append("采集结果为 0 条，后续分析将为空（降级）")
 
-    # ---- 阶段2/3/5：并行派发（三者互不依赖）----
+    # ---- 阶段2/3/5：并行派发（三者互不依赖；情绪受 include_sentiment 开关控制）----
     topic, senti, region = await asyncio.gather(
-        dispatch("topic_graph", posts, query.tag),
-        dispatch("sentiment", posts, query.include_images),
-        dispatch("region_heat", posts, cfg.region_mapper),
+        dispatch_guarded("topic_graph", warnings, TopicGraph,
+                         posts, query.tag, query.related_terms),
+        _sentiment_stage(query, posts, warnings),
+        dispatch_guarded("region_heat", warnings, RegionGraph,
+                         posts, cfg.region_mapper),
     )
 
     # ---- 阶段4：增长预测（senior-coder 草稿 → V4 Pro 审定）----
-    predictions = await dispatch("growth", posts, cfg.predictor, query.horizon_hours)
+    predictions = await dispatch_guarded("growth", warnings, list,
+                                         posts, cfg.predictor, query.horizon_hours)
 
     # ---- 阶段6：渲染（visual-analyst）----
-    graph = await dispatch("renderer", region, topic, cfg.render)
+    graph = await dispatch_guarded("renderer", warnings, lambda: None,
+                                   region, topic, cfg.render)
 
     # ---- 阶段7：汇总 + 一致性校验 + 安全审核 + 拍板（V4 Pro）----
     return finalize(query, topic, senti, predictions, region, graph, warnings)
@@ -103,7 +140,7 @@ def finalize(
     senti: SentimentAgg | None,
     predictions: list,
     region: RegionGraph | None,
-    graph,
+    graph: HotspotGraph | None,
     warnings: list[str] | None = None,
 ) -> PipelineResult:
     """汇总 + 一致性校验 + 安全审核 + 生成 summary（V4 Pro 亲自）。"""
@@ -120,6 +157,15 @@ def finalize(
         unknown_topics = [p.topic for p in predictions if p.topic not in topic.nodes]
         if unknown_topics:
             warnings.append(f"预测话题未出现在话题图中：{', '.join(unknown_topics[:5])}")
+
+    # ---- 置信度下限（Query.confidence_threshold 接线）----
+    # 低于阈值不剔除（剔除会让报告失去主要内容），而是标记 + 告警，由阅读者自行降权。
+    if predictions:
+        low_conf = [f"{p.topic}({p.confidence:.0%})" for p in predictions
+                    if p.confidence < query.confidence_threshold]
+        if low_conf:
+            warnings.append(f"预测置信度低于阈值 {query.confidence_threshold:.0%}，仅供参考："
+                            + "、".join(low_conf[:5]))
 
     # ---- 最终安全审核：对下游产出的文本类字段再过一遍注入扫描 ----
     for label, text in _audit_fragments(topic, senti, region):
@@ -163,7 +209,8 @@ def _fmt_sentiment(s: Sentiment | None) -> str:
     return f"{s.label.value}(正{s.positive:.0%}/负{s.negative:.0%}/中{s.neutral:.0%})"
 
 
-def _build_summary(query, topic, senti, predictions, region, graph, warnings) -> str:
+def _build_summary(query, topic, senti, predictions, region,
+                   graph: HotspotGraph | None, warnings) -> str:
     lines = [
         f"# 热点预测报告 · tag「{query.tag}」",
         f"- 窗口：回溯 {query.window_hours}h / 预测 {query.horizon_hours}h / "
@@ -188,8 +235,13 @@ def _build_summary(query, topic, senti, predictions, region, graph, warnings) ->
             signal_txt = f"，速度 {sig.velocity:.1f}/h"
             if sig.is_breakout:
                 signal_txt += "，⚠️ 已触发破点"
+        interval_txt = ""
+        if top.ci_low and top.ci_high:
+            interval_txt = f"（80% 区间 {top.ci_low[-1]:.1f}~{top.ci_high[-1]:.1f}）"
+        if top.confidence < query.confidence_threshold:
+            signal_txt += f"，⚠️ 置信度低于阈值 {query.confidence_threshold:.0%}"
         lines.append(
-            f"- 增长预测：热度最高话题「{top.topic}」，未来末期量约 {tail_vol:.1f}，"
+            f"- 增长预测：热度最高话题「{top.topic}」，未来末期量约 {tail_vol:.1f}{interval_txt}，"
             f"置信度 {top.confidence:.0%}{signal_txt}"
         )
         if len(predictions) > 1:
@@ -218,7 +270,7 @@ def _build_summary(query, topic, senti, predictions, region, graph, warnings) ->
         lines.append("- 区域热度：无数据")
 
     # 网图产物
-    if graph is not None and getattr(graph, "graph_path", ""):
+    if graph is not None and graph.graph_path:
         lines.append(f"- 热力网图：已生成 `{graph.graph_path}`")
     else:
         lines.append("- 热力网图：未生成")

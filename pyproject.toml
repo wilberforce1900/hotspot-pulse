@@ -14,11 +14,31 @@ classifiers = [
     "Operating System :: OS Independent",
     "Typing :: Typed",
 ]
-# 纯标准库，零第三方依赖（离线可跑）
+# 纯标准库，零第三方依赖（离线可跑）；dev 组只服务开发期检查与 CI
 dependencies = []
+
+[project.optional-dependencies]
+dev = ["ruff>=0.6", "mypy>=1.10"]
 
 [project.scripts]
 hotspot = "hotspot_pulse.cli:main"
 
 [tool.setuptools]
 packages = ["hotspot_pulse", "hotspot_pulse.stages"]
+
+[tool.ruff]
+# 120：迁就存量代码里少量长行（关键词表、正则），不为换行而换行
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+# E/W pycodestyle · F pyflakes · I isort · B bugbear；不启 UP（避免与 py310 兼容性 churn）
+# B905 关闭：本库 zip 多用于「序列与其自身错位一位」的趋势比较，strict 语义不适用
+select = ["E", "W", "F", "I", "B"]
+ignore = ["B905"]
+
+[tool.mypy]
+python_version = "3.10"
+check_untyped_defs = true
+warn_redundant_casts = true
+ignore_missing_imports = true

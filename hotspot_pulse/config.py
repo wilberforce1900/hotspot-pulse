@@ -39,9 +39,10 @@ class RegionMapperConfig:
 @dataclass(slots=True)
 class PredictorConfig:
     """增长预测器选择（策略模式）。"""
-    kind: PredictorKind = PredictorKind.LINEAR   # 预演默认最省
+    kind: PredictorKind = PredictorKind.DAMPED   # 默认阻尼趋势：热点演化S形，线性外推会高估
     min_samples: int = 8                # 时序至少多少点才建模，否则用 mock/线性
     breakout_velocity_ratio: float = 1.5   # 破点判定：速度突增倍数阈值
+    damping_factor: float = 0.85        # kind=DAMPED 的阻尼系数 φ ∈ (0,1)，越小越早平台化
     lstm_epochs: int = 20               # kind=LSTM 时的训练轮数
 
 
@@ -66,13 +67,13 @@ class Config:
 
 
 def default_mock_config() -> Config:
-    """返回一份「离线可跑」的默认配置：mock 数据源 + LINEAR 预测 + 手写 SVG 渲染。"""
+    """返回一份「离线可跑」的默认配置：mock 数据源 + DAMPED 预测 + 手写 SVG 渲染。"""
     return Config(
         data_sources={
             DataSource.MOCK.value: DataSourceConfig(kind=DataSource.MOCK, max_posts=2000),
         },
         region_mapper=RegionMapperConfig(mode="mock"),
-        predictor=PredictorConfig(kind=PredictorKind.LINEAR),
+        predictor=PredictorConfig(kind=PredictorKind.DAMPED),
         render=RenderConfig(layout=LayoutAlgo.FORCE, output_dir="out/"),
     )
 

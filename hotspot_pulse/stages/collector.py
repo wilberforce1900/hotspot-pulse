@@ -11,10 +11,13 @@ stages/collector.py — 阶段1：数据采集。
 from __future__ import annotations
 
 import hashlib
+import logging
 import random
 from datetime import datetime, timedelta, timezone
 
 from hotspot_pulse.models import CollectResult, DataSource, Post, Query
+
+logger = logging.getLogger(__name__)
 
 # --------------------------------------------------------------------------- #
 # 共享情绪词典（与 sentiment.py 阶段一致，保证下游情绪分析可确定复现）
@@ -44,19 +47,26 @@ def _mock_text(tag: str, category: str) -> str:
     return f"关于{tag}的最新报道，数据显示讨论持续升温。"
 
 
-def _collect_mock(query: Query) -> list[Post]:
-    """mock 数据源：离线生成仿真 Post 流，供预演/测试（可复现）。"""
+def _collect_mock(query: Query, now: datetime) -> list[Post]:
+    """mock 数据源：离线生成仿真 Post 流，供预演/测试。
+
+    可复现性：tag 决定随机种子；now 由调用方注入（缺省当前 UTC），
+    同一 (tag, now) 两次调用产出完全相同的 Post 流。
+    """
     rng = random.Random(_stable_seed(query.tag))
     count = rng.randint(300, 500)
     region_pool = query.regions if query.regions else _DEFAULT_REGIONS
+    # 用户指定的关联词进入采样池：让用户意图传导到共现信号（related_terms 接线）
+    related_pool = list(_RELATED_TAGS) + [
+        t for t in query.related_terms if t and t not in _RELATED_TAGS
+    ]
 
-    now = datetime.now(timezone.utc)
     window_start = now - timedelta(hours=query.window_hours)
 
     posts: list[Post] = []
     for i in range(count):
         # 时间偏置：越接近当下越多（模拟话题「升温」）。指数<1 使 rng.random() 向 1 聚集，
-        # 让下游 LINEAR 能学到正斜率，演示增长预测与破点检测正常工作。
+        # 让下游趋势预测能学到正斜率，演示增长预测与破点检测正常工作。
         offset_hours = query.window_hours * (rng.random() ** 0.6)
         created_at = window_start + timedelta(hours=offset_hours)
         region = rng.choice(region_pool)
@@ -71,7 +81,7 @@ def _collect_mock(query: Query) -> list[Post]:
         text = _mock_text(query.tag, category)
 
         num_related = rng.randint(1, 3)
-        related = rng.sample(_RELATED_TAGS, k=num_related)
+        related = rng.sample(related_pool, k=num_related)
         tags = [query.tag] + related
 
         posts.append(Post(
@@ -83,6 +93,7 @@ def _collect_mock(query: Query) -> list[Post]:
             region=region,
             raw={"mock": True},
         ))
+    logger.info("mock 采集完成：tag=%s 共 %d 条", query.tag, len(posts))
     return posts
 
 
@@ -96,17 +107,21 @@ def _collect_search(query: Query) -> list[Post]:
     return []
 
 
-def collect(query: Query) -> CollectResult:
-    """采集主入口：路由到对应适配器并聚合结果（错误隔离 + 幂等去重）。"""
+def collect(query: Query, now: datetime | None = None) -> CollectResult:
+    """采集主入口：路由到对应适配器并聚合结果（错误隔离 + 幂等去重）。
+
+    now：注入时钟（mock 模式用它锚定窗口），缺省当前 UTC；测试可固定以完全复现。
+    """
     errors: list[str] = []
     posts: list[Post] = []
     seen: set[tuple[str, str]] = set()
     deduped = 0
+    now = now or datetime.now(timezone.utc)
 
     try:
         ds = query.data_source
         if ds == DataSource.MOCK:
-            raw = _collect_mock(query)
+            raw = _collect_mock(query, now)
         elif ds == DataSource.SOCIAL_API:
             raw = _collect_social_api(query)
             errors.append("源 SOCIAL_API 尚未实现（离线预演）")
@@ -125,11 +140,14 @@ def collect(query: Query) -> CollectResult:
                 seen.add(key)
                 posts.append(post)
     except Exception as exc:  # 错误隔离：任一源失败不拖垮整体
+        logger.exception("采集源 %s 失败", query.data_source.value)
         errors.append(f"采集异常：{exc}")
 
+    if deduped:
+        logger.info("去重丢弃 %d 条重复 Post", deduped)
     return CollectResult(
         posts=posts,
-        fetched_at=datetime.now(timezone.utc),
+        fetched_at=now,
         errors=errors,
         deduped=deduped,
     )

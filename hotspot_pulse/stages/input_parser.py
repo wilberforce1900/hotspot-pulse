@@ -13,19 +13,26 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from hotspot_pulse.config import Config
 from hotspot_pulse.models import DataSource, PredictorKind, Query
 
 # --------------------------------------------------------------------------- #
-# 安全过滤：命中即拒绝（绝不透传给下游子代理）
-# --------------------------------------------------------------------------- #
+# 安全过滤：命中即拒绝（绝不透传给下游子代理）。
+# 设计取向：**误杀比漏放危害更大**（这是舆情分析入口，不是聊天机器人）——
+# 危险模式必须带「动作意图」（动词/第二人称），裸名词（token/password 等）
+# 是合法话题词，不单独触发。
 _SECURITY_PATTERNS: list[tuple[str, re.Pattern]] = [
     ("忽略指令", re.compile(r"忽略(所有|此前|之前|上面|上述)?(的)?(所有)?指令", re.I)),
     ("泄露系统提示", re.compile(r"(泄露|输出|透露|显示)(你的|我们的)?(系统|开发者)?(提示|prompt|指令)", re.I)),
-    ("角色重定义", re.compile(r"(你|you)\s*(现在|从现在起)?是|act\s+as|pretend\s+to\s+be|扮演", re.I)),
+    ("角色重定义", re.compile(r"(你|you)\s*(现在|从现在起)?(是|扮演|充当|变成)|act\s+as|pretend\s+to\s+be", re.I)),
     ("越权请求", re.compile(r"(绕过|bypass|越权|突破)(所有|any)?(限制|restriction|安全|security)", re.I)),
     ("系统命令", re.compile(r"(执行|运行)\s*(系统|shell|bash|rm\s+-rf|sudo)", re.I)),
     ("越狱词", re.compile(r"\b(jailbreak|do\s+anything\s+now|ignore\s+all\s+(previous\s+)?instructions)\b", re.I)),
-    ("索要密钥", re.compile(r"(api\s*[_-]?key|token|secret|password|密钥|口令)", re.I)),
+    ("索要密钥", re.compile(
+        r"(泄露|透露|输出|显示|提供|索取|获取|拿到|给我|告诉我)\s*"
+        r"(你的|系统的|开发者的)?\s*"
+        r"(api\s*[_-]?key|access\s*[_-]?token|secret|password|账号密码|密码|密钥|口令|凭据)",
+        re.I)),
 ]
 
 # 地域白名单：只接受已知地域，防止自由注入任意字符串当作 region 影响下游。
@@ -63,7 +70,7 @@ class ParseResult:
     warnings: list[str] = field(default_factory=list)
 
 
-def parse_user_input(raw: str, cfg: object | None = None) -> ParseResult:
+def parse_user_input(raw: str, cfg: Config | None = None) -> ParseResult:
     """把用户原始输入解析为 Query（V4 Pro 亲自，含安全过滤）。
 
     支持的轻量语法（预演足够）：
@@ -101,14 +108,11 @@ def parse_user_input(raw: str, cfg: object | None = None) -> ParseResult:
     window_hours = 24
     horizon_hours = 6
     data_source = DataSource.MOCK
-    predictor = PredictorKind.LINEAR
+    predictor = PredictorKind.DAMPED
 
     # 从 cfg 继承默认（若传入 Config）
     if cfg is not None:
-        if getattr(getattr(cfg, "predictor", None), "kind", None) is not None:
-            predictor = cfg.predictor.kind
-        if getattr(getattr(cfg, "render", None), "output_dir", None):
-            pass  # render 与 Query 无关，忽略
+        predictor = cfg.predictor.kind
 
     def set_field(key: str, value: str) -> None:
         nonlocal tag, window_hours, horizon_hours, data_source, predictor

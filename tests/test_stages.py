@@ -47,6 +47,32 @@ class TestTopicGraph(unittest.TestCase):
         self.assertEqual(g.nodes, {})
         self.assertEqual(g.edges, [])
 
+    def test_related_terms_forced_included(self):
+        # 10 个共现=2 的杂词挤满 TOP_K=8；共现=1 的「出口」正常情况下进不来
+        posts = []
+        for j in range(10):
+            posts.append(make_post(2 * j, ["AI芯片", f"杂{j}"]))
+            posts.append(make_post(2 * j + 1, ["AI芯片", f"杂{j}"]))
+        posts.append(make_post(99, ["AI芯片", "出口"]))
+
+        g = build_topic_graph(posts, "AI芯片")
+        self.assertNotIn("出口", g.nodes)  # 未指定 → 被 TOP_K 挤掉
+
+        g2 = build_topic_graph(posts, "AI芯片", related_terms=["出口"])
+        self.assertIn("出口", g2.nodes)     # 用户指定 → 强制纳入
+        edge = next(e for e in g2.edges if e.to_topic == "出口")
+        self.assertEqual(edge.cooccurrence, 1)
+
+    def test_hashtag_fallback_from_text(self):
+        # post.tags 为空时，从正文 #hashtag 提取话题（_post_tags 回退路径）
+        posts = [
+            make_post(0, [], text="#AI芯片 看涨 #股价"),
+            make_post(1, [], text="#AI芯片 持续讨论"),
+        ]
+        g = build_topic_graph(posts, "AI芯片")
+        self.assertEqual(g.nodes["AI芯片"].post_count, 2)
+        self.assertIn("股价", g.nodes)
+
     def test_semantic_edge_without_cooccurrence(self):
         # 「AI芯片」与「AI芯片产业」共现为 0，但 bigram 高度重叠 → 语义兜底边
         posts = [make_post(0, ["AI芯片"]), make_post(1, ["AI芯片产业"])]

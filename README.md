@@ -169,10 +169,10 @@ dsh-hotspot-predictor/
 - 数据源适配器（`data_source: social_api | search | mock`）
 - 时间窗（`window_hours`、`prediction_horizon_hours`）
 - 地域映射（`region_mapper: geoip | field | mock`）
-- 预测模型（`predictor: linear | arima | prophet | lstm`，策略模式可插拔）
+- 预测模型（`predictor: damped（默认） | linear | arima | prophet | lstm`，策略模式可插拔；
+  `damped` 为阻尼趋势，贴合热点 S 形演化；`damping_factor` 控制平台化速度；
+  arima/prophet/lstm 未实现，统一回落 damped）
 - 渲染参数（图大小、颜色映射、布局算法 `networkx`/`graphviz`）
-
----
 
 ## 7. 可扩展性与非功能
 
@@ -181,6 +181,9 @@ dsh-hotspot-predictor/
 - **幂等去重**：采集按 `(source, external_id)` 去重，可重跑。
 - **错误隔离**：任一阶段失败不拖垮整体，失败 → 降级（mock/空图）+ 报告里标注。
 - **离线 mock 模式**：无网络也可端到端跑通（供预演/测试）。
+- **结构化输出**：`serialization.py` 把 `PipelineResult` 存档为 JSON（`hotspot --json 路径`）。
+- **可注入时钟**：`run_pipeline(raw, cfg, now=...)` 固定时钟即完全可复现（mock 时序锚定 now）。
+- **工程检查**：`tests/`（unittest，65 例）+ `ruff` + `mypy` + GitHub Actions（`.github/workflows/ci.yml`）。
 
 ---
 
