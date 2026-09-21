@@ -102,10 +102,19 @@ def load_config(path: str = "") -> Config:
     if not isinstance(data, dict):
         return cfg
 
-    # ---- 白名单合并（其余键丢弃）----
+    # ---- 白名单合并（其余键丢弃；密钥只收环境变量名，永不收明文）----
     if _valid_kind(data.get("data_source"), DataSource):
         kind = DataSource(data["data_source"])
-        cfg.data_sources = {kind.value: DataSourceConfig(kind=kind)}
+        src = DataSourceConfig(kind=kind)
+        if isinstance(data.get("base_url"), str):
+            src.base_url = data["base_url"]
+        if isinstance(data.get("api_key_env"), str):
+            src.api_key_env = data["api_key_env"]
+        if isinstance(data.get("params"), dict):
+            src.params = {str(k): str(v) for k, v in data["params"].items()}
+        if isinstance(data.get("max_posts"), int) and data["max_posts"] > 0:
+            src.max_posts = data["max_posts"]
+        cfg.data_sources = {kind.value: src}
 
     if _valid_kind(data.get("predictor"), PredictorKind):
         cfg.predictor.kind = PredictorKind(data["predictor"])

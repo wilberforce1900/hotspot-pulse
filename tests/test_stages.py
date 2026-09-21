@@ -176,6 +176,47 @@ class TestRenderer(unittest.TestCase):
             with open(graph.graph_path, encoding="utf-8") as fh:
                 self.assertIn("暂无数据", fh.read())
 
+    def test_force_layout_deterministic_and_bounded(self):
+        # 同一输入两次渲染字节级一致（无随机）；坐标都在画布内并写入 nodes_data
+        posts = [make_post(i, ["AI芯片", "股价"], region="中国") for i in range(3)]
+        posts += [make_post(10, ["AI芯片"], region="美国")]
+        region_g = build_region_graph(posts, RegionMapperConfig(mode="field"))
+        topic_g = build_topic_graph(posts, "AI芯片")
+
+        with tempfile.TemporaryDirectory() as tmp1, tempfile.TemporaryDirectory() as tmp2:
+            cfg1, cfg2 = RenderConfig(output_dir=tmp1), RenderConfig(output_dir=tmp2)
+            g1 = render_network(region_g, topic_g, cfg1)
+            g2 = render_network(region_g, topic_g, cfg2)
+            with open(g1.graph_path, encoding="utf-8") as fh:
+                svg1 = fh.read()
+            with open(g2.graph_path, encoding="utf-8") as fh:
+                svg2 = fh.read()
+            self.assertEqual(svg1, svg2)
+
+        width_px, height_px = int(cfg1.width * 96), int(cfg1.height * 96)
+        for node in g1.nodes:
+            self.assertIn("x", node)
+            self.assertIn("y", node)
+            self.assertGreaterEqual(node["x"], 0)
+            self.assertLessEqual(node["x"], width_px)
+            self.assertGreaterEqual(node["y"], 0)
+            self.assertLessEqual(node["y"], height_px)
+
+    def test_region_and_topic_nodes_separate_clusters(self):
+        # 力导向 + 同类聚簇：区域簇质心与话题簇质心应明显分开（比节点半径大）
+        posts = [make_post(i, ["AI芯片", f"话{i}"], region="中国") for i in range(2)]
+        posts += [make_post(10, ["AI芯片", f"话{i}"], region="美国") for i in range(2, 4)]
+        region_g = build_region_graph(posts, RegionMapperConfig(mode="field"))
+        topic_g = build_topic_graph(posts, "AI芯片")
+        with tempfile.TemporaryDirectory() as tmp:
+            graph = render_network(region_g, topic_g, RenderConfig(output_dir=tmp))
+        regions = [n for n in graph.nodes if n["kind"] == "region"]
+        topics = [n for n in graph.nodes if n["kind"] == "topic"]
+        self.assertTrue(regions and topics)
+        r_cx = sum(n["x"] for n in regions) / len(regions)
+        t_cx = sum(n["x"] for n in topics) / len(topics)
+        self.assertGreater(abs(r_cx - t_cx), 2 * max(n["size"] for n in graph.nodes))
+
 
 if __name__ == "__main__":
     unittest.main()

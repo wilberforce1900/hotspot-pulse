@@ -110,9 +110,12 @@ def parse_user_input(raw: str, cfg: Config | None = None) -> ParseResult:
     data_source = DataSource.MOCK
     predictor = PredictorKind.DAMPED
 
-    # 从 cfg 继承默认（若传入 Config）
+    # 从 cfg 继承默认（若传入 Config）：预测器；以及配置文件指定的唯一数据源
+    # （用户仍可在输入串用 source:xxx 显式覆盖）
     if cfg is not None:
         predictor = cfg.predictor.kind
+        if len(cfg.data_sources) == 1:
+            data_source = next(iter(cfg.data_sources.values())).kind
 
     def set_field(key: str, value: str) -> None:
         nonlocal tag, window_hours, horizon_hours, data_source, predictor

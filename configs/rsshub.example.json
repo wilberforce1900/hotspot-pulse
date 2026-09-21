@@ -1,0 +1,5 @@
+{
+  "data_source": "rss",
+  "base_url": "http://localhost:1200/36kr/newsflashes",
+  "max_posts": 500
+}

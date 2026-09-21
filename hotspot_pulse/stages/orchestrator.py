@@ -107,7 +107,9 @@ async def run_pipeline(raw_input: str, cfg: Config | None = None,
     warnings: list[str] = list(parsed.warnings)
 
     # ---- 阶段1：采集（senior-coder）----
-    collect_res = await dispatch_guarded("collector", warnings, lambda: None, query, now)
+    source_cfg = cfg.data_sources.get(query.data_source.value)
+    collect_res = await dispatch_guarded("collector", warnings, lambda: None,
+                                         query, now, source_cfg)
     posts = collect_res.posts if collect_res is not None else []
     warnings.extend(collect_res.errors if collect_res is not None else [])
     if not posts:

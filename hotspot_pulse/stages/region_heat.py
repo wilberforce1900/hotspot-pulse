@@ -15,17 +15,12 @@ V4 Pro 审定修复：
 
 from __future__ import annotations
 
-import hashlib
 from collections import Counter, defaultdict
 
 from hotspot_pulse.config import RegionMapperConfig
 from hotspot_pulse.models import Post, RegionEdge, RegionGraph, RegionNode
-
-_DEFAULT_POOL = ["中国", "美国", "日本", "欧洲"]
-
-
-def _stable_hash(s: str) -> int:
-    return int.from_bytes(hashlib.md5(s.encode("utf-8")).digest()[:8], "big")
+from hotspot_pulse.shared import DEFAULT_REGIONS as _DEFAULT_POOL
+from hotspot_pulse.shared import stable_hash as _stable_hash
 
 
 def build_region_graph(posts: list[Post], cfg: RegionMapperConfig) -> RegionGraph:

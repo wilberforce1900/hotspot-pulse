@@ -50,6 +50,8 @@ class DataSource(str, Enum):
     """数据源适配器标识。"""
     SOCIAL_API = "social_api"
     SEARCH = "search"
+    RSS = "rss"              # RSS/Atom 新闻订阅源（开源默认接口，密钥走环境变量）
+    GDELT = "gdelt"          # GDELT Doc 2.0 全球新闻 API（免费、免密钥；查询词出境美国）
     CRAWLER = "crawler"
     MOCK = "mock"            # 离线/预演模式
 

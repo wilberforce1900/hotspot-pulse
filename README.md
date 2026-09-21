@@ -32,9 +32,11 @@ dsh-hotspot-predictor/
 ├── pyproject.toml             # 打包配置（pip install . → hotspot 命令）
 ├── hotspot_pulse/             # 主包
 │   ├── __init__.py            # 公共 API：run_pipeline / load_config
-│   ├── cli.py                 # 命令行入口（argparse + --config）
+│   ├── cli.py                 # 命令行入口（argparse + --config/--json/--verbose）
 │   ├── models.py              # 统一数据契约（dataclass 地基）
 │   ├── config.py              # 配置加载（适配器/策略选择器）
+│   ├── serialization.py       # PipelineResult → JSON 存档
+│   ├── shared.py              # 跨阶段共享词典/常量/稳定哈希（单一来源）
 │   └── stages/                # 流水线各阶段（委派单元，见下表）
 ├── tests/                     # 单元测试（unittest，覆盖各阶段 + 端到端）
 └── out/                       # 运行产物（gitignore）
@@ -166,13 +168,66 @@ dsh-hotspot-predictor/
 
 ## 6. 配置（见 `hotspot_pulse/config.py`）
 
-- 数据源适配器（`data_source: social_api | search | mock`）
+- 数据源适配器（`data_source: social_api | search | rss | gdelt | mock`）
 - 时间窗（`window_hours`、`prediction_horizon_hours`）
 - 地域映射（`region_mapper: geoip | field | mock`）
 - 预测模型（`predictor: damped（默认） | linear | arima | prophet | lstm`，策略模式可插拔；
   `damped` 为阻尼趋势，贴合热点 S 形演化；`damping_factor` 控制平台化速度；
   arima/prophet/lstm 未实现，统一回落 damped）
-- 渲染参数（图大小、颜色映射、布局算法 `networkx`/`graphviz`）
+- 渲染参数（图大小、颜色映射、布局：力导向已实现——纯标准库、确定性、
+  区域/话题自然分簇；`networkx`/`graphviz` 仍为设计选项未接）
+
+### 6.1 RSS/新闻源接入（开源接口，密钥自备）
+
+RSS/Atom 适配器已内置（离线/源不可达时自动降级为警告，不拖垮流水线）。
+**密钥约定：代码与配置文件永不存明文密钥**——配置里只写环境变量名，
+请求时刻注入 `X-Api-Key` 请求头，不进 URL、日志与导出数据：
+
+```json
+{
+  "data_source": "rss",
+  "base_url": "https://news.example.com/feed",
+  "api_key_env": "HOTSPOT_RSS_KEY",
+  "params": {"lang": "zh"},
+  "max_posts": 500
+}
+```
+
+```bash
+export HOTSPOT_RSS_KEY=你的密钥      # 由使用者自备；不设置则以匿名方式请求
+hotspot "AI芯片 24小时" --config rss.json
+```
+
+安全防护：响应体积上限 5MB、超时 10s、拒绝含 DTD/实体声明的 XML（防实体炸弹）、
+正文剥离 HTML 后截断入库。
+
+#### 方案 A · 配合自托管 RSSHub（推荐，数据不出境）
+
+[RSSHub](https://github.com/DIYgod/RSSHub) 可把微博/知乎/B站等无 RSS 的站点转为标准
+RSS——本适配器可直接消费其输出，零代码改动：
+
+```bash
+docker run -d -p 1200:1200 diygod/rsshub          # 起本地实例（请求仅从本机发往目标站）
+python main.py "AI芯片 24小时" --config configs/rsshub.example.json
+```
+
+`configs/rsshub.example.json` 中 `base_url` 换成你实例上的任意路由
+（如 `/weibo/search/hot/...`、`/zhihu/hot`）。需要登录态的路由按 RSSHub 文档在
+容器环境变量里配 Cookie/Token，密钥不进本项目代码。
+不建议生产使用公共实例 `rsshub.app`（查询会经过第三方服务器）。
+
+#### 方案 B · GDELT Doc 2.0（免密钥的全球新闻 API）
+
+```bash
+python main.py "AI芯片 24小时" --config configs/gdelt.example.json
+```
+
+- **免费、无需任何密钥**；`window_hours` 自动映射 `timespan`，单次上限 250 条。
+- `sourcecountry` 自动映射为中文区域名（中国/美国/欧洲…，未收录国别原样保留），
+  直接喂给区域热度阶段。
+- ⚠️ **数据出境提示**：查询词（即你的 tag）会发送至美国 `api.gdeltproject.org`。
+  选择本源即视为接受该行为；介意者请用方案 A。
+- 网络防护与 RSS 一致（超时/体积上限/非 JSON 降级），离线时自动降级为警告。
 
 ## 7. 可扩展性与非功能
 

@@ -13,20 +13,12 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 
 from hotspot_pulse.models import EmotionKind, Post, Sentiment, SentimentAgg, SentimentLabel
+from hotspot_pulse.shared import EMOTION_KEYWORDS as _SHARED_EMOTION_KEYWORDS
+from hotspot_pulse.shared import NEGATIVE_KEYWORDS as _NEGATIVE_KEYWORDS
+from hotspot_pulse.shared import POSITIVE_KEYWORDS as _POSITIVE_KEYWORDS
 
-# --------------------------------------------------------------------------- #
-# 共享情绪词典（与 collector.py 阶段一致）
-# --------------------------------------------------------------------------- #
-_POSITIVE_KEYWORDS = {"利好", "上涨", "突破", "增长", "创新", "火爆", "看涨", "惊喜", "期待", "支持"}
-_NEGATIVE_KEYWORDS = {"利空", "下跌", "风险", "担忧", "争议", "亏损", "暴跌", "质疑", "恐慌", "失望"}
-
-_EMOTION_KEYWORDS = {
-    EmotionKind.ANGER: {"愤怒", "气愤"},
-    EmotionKind.FEAR: {"恐惧", "恐慌", "担忧"},
-    EmotionKind.JOY: {"开心", "惊喜", "兴奋"},
-    EmotionKind.SADNESS: {"难过", "失望"},
-    EmotionKind.SURPRISE: {"惊讶", "意外"},
-}
+# 共享词典以字符串为键；本阶段使用 EmotionKind 键的视图
+_EMOTION_KEYWORDS = {EmotionKind(k): words for k, words in _SHARED_EMOTION_KEYWORDS.items()}
 
 
 def _normalize_probabilities(pos: int, neg: int) -> tuple[float, float, float]:
