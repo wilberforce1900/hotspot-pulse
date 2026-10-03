@@ -215,23 +215,34 @@ def render_network(region: RegionGraph, topics: TopicGraph, cfg: RenderConfig) -
                  f'viewBox="0 0 {width} {height}" xmlns="http://www.w3.org/2000/svg">')
     parts.append('<rect width="100%" height="100%" fill="#ffffff"/>')
     parts.append('<text x="12" y="20" font-family="sans-serif" font-size="14" fill="#333">'
-                 'Hotspot · 实心=区域 / 空心=话题</text>')
+                 'Hotspot · 实心=区域（箭头=跨区传播方向） / 空心=话题</text>')
+    # 区域边箭头 marker（先爆发 → 后跟随）
+    parts.append('<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" '
+                 'markerWidth="7" markerHeight="7" orient="auto-start-reverse">'
+                 '<path d="M 0 0 L 10 5 L 0 10 z" fill="#9e9e9e"/></marker></defs>')
 
     # 边（先画）
+    node_sizes = {(kind, name): _size_for_heat(heat) for kind, name, heat, _c in node_items}
+
     def draw_edge(kind: str, src: str, dst: str, weight: float) -> None:
         a = coords.get((kind, src))
         b = coords.get((kind, dst))
         if a is None or b is None or src == dst:
             return
         w = 1.0 + max(0.0, min(1.0, weight)) * 4.0
-        parts.append(f'<line x1="{a[0]:.1f}" y1="{a[1]:.1f}" x2="{b[0]:.1f}" y2="{b[1]:.1f}" '
-                     f'stroke="#9e9e9e" stroke-width="{w:.1f}" stroke-opacity="0.7"/>')
+        # 终点回退到目标节点边缘，箭头不被节点圆盖住
+        dx, dy = b[0] - a[0], b[1] - a[1]
+        d = max(1.0, math.hypot(dx, dy))
+        gap = node_sizes.get((kind, dst), 10.0) + 3.0
+        bx, by = b[0] - dx / d * gap, b[1] - dy / d * gap
+        arrow = ' marker-end="url(#arrow)"' if kind == "region" else ""
+        parts.append(f'<line x1="{a[0]:.1f}" y1="{a[1]:.1f}" x2="{bx:.1f}" y2="{by:.1f}" '
+                     f'stroke="#9e9e9e" stroke-width="{w:.1f}" stroke-opacity="0.7"{arrow}/>')
 
     for g, src, dst, w in edge_items:
         draw_edge(g, src, dst, w)
 
     # 分组质心标注（置于簇上方，避开节点与标签）
-    node_sizes = {(kind, name): _size_for_heat(heat) for kind, name, heat, _c in node_items}
     for kind, caption in (("region", "区域"), ("topic", "话题")):
         members = [(g, n) for (g, n) in coords if g == kind]
         if members:

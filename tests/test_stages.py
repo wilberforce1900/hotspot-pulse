@@ -163,7 +163,19 @@ class TestRegionHeat(unittest.TestCase):
         posts = [make_post(0, ["T"], region="中国"), make_post(1, ["T"], region="美国")]
         g = build_region_graph(posts, RegionMapperConfig(mode="field"))
         pairs = {(e.from_region, e.to_region) for e in g.edges}
-        self.assertIn(("中国", "美国"), pairs)
+        self.assertIn(("中国", "美国"), pairs)   # 中国先出现 → 方向 中国→美国
+
+    def test_edge_direction_by_majority_lead_votes(self):
+        # 两个话题对中美方向投票相反，多票方定方向：美国领先 2:1 → 美国→中国
+        posts = [
+            make_post(0, ["T1"], region="美国"), make_post(3, ["T1"], region="中国"),
+            make_post(1, ["T2"], region="美国"), make_post(4, ["T2"], region="中国"),
+            make_post(0, ["T3"], region="中国"), make_post(2, ["T3"], region="美国"),
+        ]
+        g = build_region_graph(posts, RegionMapperConfig(mode="field"))
+        self.assertEqual(len(g.edges), 1)
+        edge = g.edges[0]
+        self.assertEqual((edge.from_region, edge.to_region), ("美国", "中国"))
 
     def test_no_edges_when_topics_are_single_region(self):
         posts = [make_post(0, ["T1"], region="中国"), make_post(1, ["T2"], region="美国")]

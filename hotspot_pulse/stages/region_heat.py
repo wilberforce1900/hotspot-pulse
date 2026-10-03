@@ -16,6 +16,7 @@ V4 Pro 审定修复：
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+from datetime import datetime
 
 from hotspot_pulse.config import RegionMapperConfig
 from hotspot_pulse.models import Post, RegionEdge, RegionGraph, RegionNode
@@ -69,31 +70,56 @@ def _infer_region(post: Post, cfg: RegionMapperConfig) -> str:
 
 def _region_edges(nodes: dict[str, RegionNode],
                   post_regions: list[tuple[Post, str]]) -> list[RegionEdge]:
-    """跨区传播边：同一 topic 在 ≥2 区域出现 → 两两建边，权重按 max 归一。"""
+    """跨区传播边：同一 topic 在 ≥2 区域出现 → 两两建边，权重按 max 归一。
+
+    方向 = 传播语义：对每对区域取「各话题上更早出现的一侧」投票，得票多者为
+    from（先爆发），平票按区域名字典序（确定性）。from → to 读作「先 → 后」。
+    """
     if not post_regions:
         return []
 
     topic_regions: dict[str, set[str]] = defaultdict(set)
     topic_region_count: Counter[tuple[str, str]] = Counter()
+    topic_region_first_ts: dict[tuple[str, str], datetime] = {}
     for post, r in post_regions:
         for tag in post.tags:
             topic_regions[tag].add(r)
             topic_region_count[(tag, r)] += 1
+            key = (tag, r)
+            if key not in topic_region_first_ts or post.created_at < topic_region_first_ts[key]:
+                topic_region_first_ts[key] = post.created_at
 
     cross_topics = [t for t, rs in topic_regions.items() if len(rs) >= 2]
     if not cross_topics:
         return []
 
     raw: dict[tuple[str, str], float] = defaultdict(float)
+    lead_votes: Counter[tuple[str, str]] = Counter()   # (x, y) → x 领先票数
     for t in cross_topics:
         rs = sorted(topic_regions[t])
         for i in range(len(rs)):
             for j in range(i + 1, len(rs)):
                 a, b = rs[i], rs[j]
                 raw[(a, b)] += topic_region_count[(t, a)] + topic_region_count[(t, b)]
+                ta = topic_region_first_ts.get((t, a))
+                tb = topic_region_first_ts.get((t, b))
+                if ta is not None and tb is not None:
+                    if ta < tb:
+                        lead_votes[(a, b)] += 1
+                    elif tb < ta:
+                        lead_votes[(b, a)] += 1
+                # 时间并列（或缺失）不投票
 
     if not raw:
         return []
     max_w = max(raw.values())
-    return [RegionEdge(from_region=a, to_region=b, weight=w / max_w)
-            for (a, b), w in raw.items()]
+    edges: list[RegionEdge] = []
+    for (a, b), w in raw.items():
+        # 先行方为 from：a 领先票多 → (a,b)；b 多或平票按字典序 a<b（键本身有序）
+        if lead_votes[(b, a)] > lead_votes[(a, b)]:
+            src, dst = b, a
+        else:
+            src, dst = a, b
+        edges.append(RegionEdge(from_region=src, to_region=dst, weight=w / max_w))
+    edges.sort(key=lambda e: (e.from_region, e.to_region))
+    return edges
