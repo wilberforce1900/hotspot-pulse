@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 # 关联词池（用于生成话题共现信号）
 _RELATED_TAGS = ["股价", "芯片", "科技", "政策", "市场", "研发", "供应链", "出口"]
 
-_USER_AGENT = "HotSpotPulse/0.1 (open-source; +https://github.com/) "
+_USER_AGENT = "HotSpotPulse/0.1 (open-source; +https://github.com/wilberforce1900/hotspot-pulse) "
 _HTTP_TIMEOUT_SECONDS = 10
 _MAX_FEED_BYTES = 5 * 1024 * 1024  # 响应体积上限，防异常大响应拖垮内存
 
