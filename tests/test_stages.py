@@ -34,13 +34,41 @@ class TestTopicGraph(unittest.TestCase):
         g = build_topic_graph(posts, "AI芯片")
         self.assertIn("AI芯片", g.nodes)
         self.assertEqual(g.nodes["AI芯片"].post_count, 5)
-        edge_targets = {e.to_topic for e in g.edges}
+        seed_edges = [e for e in g.edges if e.from_topic == "AI芯片"]
+        edge_targets = {e.to_topic for e in seed_edges}
         self.assertIn("股价", edge_targets)
         self.assertIn("出口", edge_targets)
         for e in g.edges:
-            self.assertEqual(e.from_topic, "AI芯片")
             self.assertGreater(e.weight, 0.0)
             self.assertLessEqual(e.weight, 1.0)
+
+    def test_inter_topic_cooccurrence_edges(self):
+        # 「股价」与「出口」只与 seed 同现也能互相关联 → 话题间边构成真网络
+        posts = [make_post(i, ["AI芯片", "股价", "出口"]) for i in range(4)]
+        g = build_topic_graph(posts, "AI芯片")
+        inter = [e for e in g.edges
+                 if e.from_topic != "AI芯片" and e.to_topic != "AI芯片"]
+        pair = next((e for e in inter
+                     if {e.from_topic, e.to_topic} == {"股价", "出口"}), None)
+        self.assertIsNotNone(pair)
+        self.assertEqual(pair.cooccurrence, 4)
+        self.assertGreater(pair.weight, 0.0)
+
+    def test_inter_topic_edges_capped_and_deterministic(self):
+        # 12 个话题全连通 → 话题间边截断到上限；两次构建结果一致
+        tags = ["AI芯片"] + [f"话{i}" for i in range(12)]
+        posts = [make_post(i, tags) for i in range(3)]
+        g1 = build_topic_graph(posts, "AI芯片")
+        g2 = build_topic_graph(posts, "AI芯片")
+        inter = [e for e in g1.edges
+                 if e.from_topic != "AI芯片" and e.to_topic != "AI芯片"]
+        self.assertLessEqual(len(inter), 12)
+        self.assertEqual(
+            [(e.from_topic, e.to_topic, round(e.weight, 6)) for e in g1.edges],
+            [(e.from_topic, e.to_topic, round(e.weight, 6)) for e in g2.edges],
+        )
+        # 共现降序：最强的对排在最前
+        self.assertEqual(inter[0].cooccurrence, max(e.cooccurrence for e in inter))
 
     def test_empty_posts(self):
         g = build_topic_graph([], "AI芯片")

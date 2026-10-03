@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 _HASHTAG_PATTERN = re.compile(r"[#@](\S+)")
 _TOP_K = 8  # 关联话题数量上限
+_INTER_TOPIC_TOP_K = 12  # 话题间共现边上限（seed 星形边之外，防大图边爆炸）
 
 
 def build_topic_graph(posts: list[Post], seed_tag: str,
@@ -33,6 +34,8 @@ def build_topic_graph(posts: list[Post], seed_tag: str,
     - 共现：post 含 seed_tag 时，其余 tag 的共现计数 +1。
     - weight = 0.7 × (cooccurrence/max_cooccurrence) + 0.3 × semantic_similarity，夹 [0,1]。
     - 共现为 0 但语义相似 > 0.35 的边也保留（语义兜底）。
+    - 话题间也建共现边（真网络，非 seed 星形）：确定性取共现最强的
+      _INTER_TOPIC_TOP_K 条，权重公式与 seed 边一致。
     """
     if not posts:
         return TopicGraph(nodes={}, edges=[], as_of=datetime.now(timezone.utc))
@@ -93,8 +96,34 @@ def build_topic_graph(posts: list[Post], seed_tag: str,
         if weight > 0.0:
             edges.append(RelatedEdge(from_topic=seed_tag, to_topic=t, weight=weight, cooccurrence=c))
 
+    # 话题间共现边：把话题图从 seed 星形升级为真网络（确定性：共现降序、同数按名称序）
+    pair_cooc = _pairwise_cooccurrence(posts, set(nodes) - {seed_tag})
+    if pair_cooc:
+        max_pair = max(pair_cooc.values())
+        ranked = sorted(pair_cooc.items(), key=lambda kv: (-kv[1], kv[0]))
+        for (a, b), c in ranked[:_INTER_TOPIC_TOP_K]:
+            weight = max(0.0, min(1.0, 0.7 * (c / max_pair)
+                                  + 0.3 * _semantic_similarity(a, b)))
+            if weight > 0.0:
+                edges.append(RelatedEdge(from_topic=a, to_topic=b, weight=weight, cooccurrence=c))
+
     logger.info("话题图构建完成：%d 节点 / %d 边（seed=%s）", len(nodes), len(edges), seed_tag)
     return TopicGraph(nodes=nodes, edges=edges, as_of=datetime.now(timezone.utc))
+
+
+def _pairwise_cooccurrence(posts: list[Post],
+                           keep: set[str]) -> Counter:
+    """统计 keep 内话题两两共现次数（同一 post 的 tags 视为全部共现）。
+
+    返回键为排序后的 (a, b) 元组（a < b），保证无向边不重复计数。
+    """
+    counter: Counter = Counter()
+    for post in posts:
+        tags = sorted(set(_post_tags(post)) & keep)
+        for i in range(len(tags)):
+            for j in range(i + 1, len(tags)):
+                counter[(tags[i], tags[j])] += 1
+    return counter
 
 
 def _post_tags(post: Post) -> list[str]:
