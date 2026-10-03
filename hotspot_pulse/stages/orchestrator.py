@@ -24,6 +24,7 @@ from collections.abc import Callable
 
 from hotspot_pulse.config import Config, default_mock_config
 from hotspot_pulse.models import (
+    DataSource,
     HotspotGraph,
     PipelineResult,
     Query,
@@ -114,6 +115,11 @@ async def run_pipeline(raw_input: str, cfg: Config | None = None,
     warnings.extend(collect_res.errors if collect_res is not None else [])
     if not posts:
         warnings.append("采集结果为 0 条，后续分析将为空（降级）")
+
+    # 真实源（RSS/GDELT）原生只有查询 tag → 从标题/正文提取话题词，
+    # 让话题图/情绪/增长/区域四个阶段共享增强后的标签（V4 Pro 把关：仅真实源）
+    if posts and query.data_source in (DataSource.RSS, DataSource.GDELT):
+        posts = topic_graph.enrich_posts(posts, query.tag)
 
     # ---- 阶段2/3/5：并行派发（三者互不依赖；情绪受 include_sentiment 开关控制）----
     topic, senti, region = await asyncio.gather(

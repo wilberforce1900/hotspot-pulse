@@ -20,8 +20,32 @@ from hotspot_pulse.models import Post, RelatedEdge, Topic, TopicGraph
 logger = logging.getLogger(__name__)
 
 _HASHTAG_PATTERN = re.compile(r"[#@](\S+)")
+_LATIN_WORD_PATTERN = re.compile(r"[A-Za-z][A-Za-z0-9+\-.]{2,}")   # ≥3 字符的英文/技术词
+_CJK_RUN_PATTERN = re.compile(r"[\u4e00-\u9fff]{2,}")              # ≥2 字的连续中文串
 _TOP_K = 8  # 关联话题数量上限
 _INTER_TOPIC_TOP_K = 12  # 话题间共现边上限（seed 星形边之外，防大图边爆炸）
+
+# 英文停用词（标题提取用；保持小而够用，纯标准库不引依赖）
+_LATIN_STOPWORDS = frozenset({
+    "the", "and", "for", "are", "but", "not", "you", "all", "can", "her", "was",
+    "one", "our", "out", "day", "get", "has", "him", "his", "how", "man", "new",
+    "now", "old", "see", "two", "way", "who", "its", "did", "that", "this",
+    "with", "have", "from", "they", "will", "would", "there", "their", "what",
+    "about", "which", "when", "make", "like", "time", "just", "know", "take",
+    "into", "your", "good", "some", "them", "than", "then", "over", "after",
+    "before", "amid", "could", "should", "being", "under", "between", "more",
+})
+
+# 网络样板词（RSS 链接/版式常用词，对话题无信息量）
+_WEB_BOILERPLATE = frozenset({
+    "url", "http", "https", "www", "com", "org", "net", "html", "amp",
+    "article", "feed", "rss", "link", "links", "read", "more",
+})
+
+# 中文提取参数：bigram 需出现在 ≥_CJK_MIN_POSTS 个不同帖子（语料级阈值，抗偶发噪声）
+_CJK_MIN_POSTS = 3
+_CJK_TOP_K = 20
+_EXTRA_TAGS_PER_POST = 6   # 每帖最多追加的提取词数（防标签爆炸）
 
 
 def build_topic_graph(posts: list[Post], seed_tag: str,
@@ -124,6 +148,90 @@ def _pairwise_cooccurrence(posts: list[Post],
             for j in range(i + 1, len(tags)):
                 counter[(tags[i], tags[j])] += 1
     return counter
+
+
+# --------------------------------------------------------------------------- #
+# 话题词提取：让真实源（RSS/GDELT，原生只有查询 tag）的话题图不再孤点
+# --------------------------------------------------------------------------- #
+def _extract_hashtags(text: str) -> list[str]:
+    """从正文提取 #话题 / @提及（去符号，保留原文大小写）。"""
+    return [m.group(1).lstrip("#@") for m in _HASHTAG_PATTERN.finditer(text or "")
+            if len(m.group(1)) >= 2]
+
+
+def _extract_latin_words(text: str) -> list[str]:
+    """提取 ≥3 字符的英文/技术词（小写化、去停用词、去重保序）。"""
+    seen: set[str] = set()
+    words: list[str] = []
+    for m in _LATIN_WORD_PATTERN.finditer(text or ""):
+        w = m.group(0).lower().rstrip(".-")
+        if (len(w) >= 3 and w not in _LATIN_STOPWORDS
+                and w not in _WEB_BOILERPLATE and w not in seen):
+            seen.add(w)
+            words.append(w)
+    return words
+
+
+def _cjk_bigram_topics(posts: list[Post]) -> list[str]:
+    """语料级中文 bigram 话题：出现在 ≥3 个帖子的字符 bigram，取频次前 K。
+
+    纯标准库做不了真分词；语料级阈值（跨帖子复现）是噪声与可读性的折中——
+    单帖偶发搭配进不来，多帖反复出现的二字词大概率是实义词。
+    """
+    post_bigrams: list[set[str]] = []
+    for post in posts:
+        grams: set[str] = set()
+        for run in _CJK_RUN_PATTERN.findall(post.text or ""):
+            grams.update(run[i:i + 2] for i in range(len(run) - 1))
+        post_bigrams.append(grams)
+    counter: Counter = Counter()
+    for grams in post_bigrams:
+        counter.update(grams)
+    qualified = [(g, c) for g, c in counter.items() if c >= _CJK_MIN_POSTS]
+    qualified.sort(key=lambda kv: (-kv[1], kv[0]))   # 确定性排序
+    return [g for g, _ in qualified[:_CJK_TOP_K]]
+
+
+def enrich_posts(posts: list[Post], seed_tag: str) -> list[Post]:
+    """给真实源的帖子补提取话题词（浅拷贝，不改原对象）。
+
+    提取三路：#hashtag（正文）、英文词（去停用词）、中文 bigram（语料级阈值）。
+    每帖追加 ≤6 个、排除 seed 与已有 tag。仅 orchestrator 对 RSS/GDELT 源调用
+    ——mock 源自带丰富关联 tag，再叠加提取只会引入模板噪声。
+    """
+    if not posts:
+        return posts
+    cjk_topics = set(_cjk_bigram_topics(posts))
+
+    enriched: list[Post] = []
+    for post in posts:
+        candidates = _extract_post_topics(post, seed_tag, cjk_topics)
+        if candidates:
+            enriched.append(Post(
+                external_id=post.external_id, source=post.source,
+                created_at=post.created_at, author=post.author,
+                text=post.text, images=list(post.images),
+                tags=post.tags + candidates, region=post.region, raw=post.raw,
+            ))
+        else:
+            enriched.append(post)
+    logger.info("话题词提取：CJK bigram 候选 %d 个，增强完成", len(cjk_topics))
+    return enriched
+
+
+def _extract_post_topics(post: Post, seed_tag: str,
+                         cjk_topics: set[str]) -> list[str]:
+    """单帖提取：hashtag → 英文词 → 命中的语料级 bigram；去重、排除已有，截上限。"""
+    existing = set(post.tags)
+    picked: list[str] = []
+    for term in (_extract_hashtags(post.text)
+                 + _extract_latin_words(post.text)
+                 + [g for g in cjk_topics if g in (post.text or "")]):
+        t = term.strip()
+        if (t and t != seed_tag and t not in existing and t not in picked
+                and len(picked) < _EXTRA_TAGS_PER_POST):
+            picked.append(t)
+    return picked
 
 
 def _post_tags(post: Post) -> list[str]:

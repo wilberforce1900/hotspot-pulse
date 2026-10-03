@@ -240,6 +240,10 @@ python main.py "AI芯片 24小时" --config configs/gdelt.example.json
 > **真实源的区域说明**：RSS 源不带地域字段，默认配置的 `region_mapper: mock`
 > 会按确定性哈希把帖分到演示区域池（仅示意）。要诚实的「未知」请加
 > `"region_mapper": {"mode": "field"}`；GDELT 源自带 `sourcecountry`，无需处理。
+>
+> **真实源的话题提取**：RSS/GDELT 帖子原生只带查询 tag，流水线会自动从
+> 标题/正文提取话题词（#hashtag、英文词去停用词、中文二字词按语料级阈值），
+> 让话题图/情绪/增长/区域四个阶段共享增强标签——纯标准库启发式，非分词器。
 
 ## 7. 可扩展性与非功能
 

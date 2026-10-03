@@ -12,7 +12,11 @@ from hotspot_pulse.models import DataSource, Post
 from hotspot_pulse.stages.region_heat import build_region_graph
 from hotspot_pulse.stages.renderer import render_network
 from hotspot_pulse.stages.sentiment import _classify_text, analyze_sentiment
-from hotspot_pulse.stages.topic_graph import build_topic_graph
+from hotspot_pulse.stages.topic_graph import (
+    _extract_latin_words,
+    build_topic_graph,
+    enrich_posts,
+)
 
 T0 = datetime(2026, 9, 15, 0, 0, tzinfo=timezone.utc)
 
@@ -109,6 +113,60 @@ class TestTopicGraph(unittest.TestCase):
         self.assertIsNotNone(edge)
         self.assertEqual(edge.cooccurrence, 0)
         self.assertGreater(edge.weight, 0.35)
+
+
+class TestEnrichPosts(unittest.TestCase):
+    def _rss_post(self, i: int, title: str) -> Post:
+        return Post(
+            external_id=f"r{i}", source=DataSource.RSS,
+            created_at=T0 + timedelta(hours=i), text=title, tags=["AI芯片"],
+        )
+
+    def test_hashtag_and_latin_extraction(self):
+        posts = [self._rss_post(0, "OpenAI launches #GPT5 with breakthrough pricing")]
+        enriched = enrich_posts(posts, "AI芯片")
+        tags = enriched[0].tags
+        self.assertEqual(tags[0], "AI芯片")            # 原有 tag 保留在前
+        self.assertIn("GPT5", tags)                     # #hashtag 提取
+        self.assertIn("openai", tags)                   # 英文词（小写）
+        self.assertIn("pricing", tags)
+        self.assertNotIn("with", tags)                  # 停用词被滤除
+
+    def test_latin_words_deterministic_and_stripped(self):
+        # 停用词滤除、小写去重保序、连字符技术词保留整词、<3 字符不收
+        words = _extract_latin_words("The the Apple apple announces M5-chip. and AI")
+        self.assertEqual(words, ["apple", "announces", "m5-chip"])
+
+    def test_cjk_bigram_requires_corpus_threshold(self):
+        # 「市场」在 3 帖出现（≥阈值）成为话题；「偶发」只出现 1 次不进
+        texts = ["市场看好", "市场平稳 偶发", "市场再涨"]
+        posts = [self._rss_post(i, t) for i, t in enumerate(texts)]
+        enriched = enrich_posts(posts, "AI芯片")
+        flat = {t for p in enriched for t in p.tags}
+        self.assertTrue(any("市场" in t for t in flat))
+        self.assertFalse(any("偶发" in t for t in flat))
+
+    def test_seed_and_existing_tags_excluded_per_post_cap(self):
+        posts = [self._rss_post(0, "seed #a1 #b2 #c3 #d4 #e5 #f6 #g7 #h8 #i9")]
+        posts[0].tags = ["AI芯片"]
+        enriched = enrich_posts(posts, "AI芯片")
+        extras = enriched[0].tags[1:]
+        self.assertEqual(len(extras), 6)                # 每帖上限
+        self.assertNotIn("AI芯片", extras)
+
+    def test_original_posts_not_mutated(self):
+        posts = [self._rss_post(0, "openai announcement")]
+        enrich_posts(posts, "AI芯片")
+        self.assertEqual(posts[0].tags, ["AI芯片"])     # 原对象不变（浅拷贝）
+
+    def test_enriched_posts_build_real_topic_graph(self):
+        # 端到端语义：增强后话题图不再只有 seed 孤点
+        texts = ["OpenAI GPT5 launch #AI", "Google Gemini update #AI", "Apple chip M5 #AI"]
+        posts = [self._rss_post(i, t) for i, t in enumerate(texts)]
+        enriched = enrich_posts(posts, "AI芯片")
+        g = build_topic_graph(enriched, "AI芯片")
+        self.assertIn("AI芯片", g.nodes)
+        self.assertTrue(any(n != "AI芯片" for n in g.nodes))
 
 
 class TestSentiment(unittest.TestCase):
