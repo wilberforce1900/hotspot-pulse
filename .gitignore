@@ -7,9 +7,8 @@ build/
 dist/
 *.egg
 
-# 运行产物
+# 运行产物（out/ 已整体忽略；docs/ 下的样例 SVG 是文档资产，不在此列）
 out/
-*.svg
 
 # 虚拟环境
 .venv/

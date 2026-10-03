@@ -1,16 +1,24 @@
-# HotSpot Pulse — 热点流量预测与情绪分析系统（设计架构 v1）
+# HotSpot Pulse — 热点流量预测与情绪分析系统
 
-> 本文档是**设计逻辑架构**，不含实现。目的：让主模型（DeepSeek V4 Pro 总指挥）与
-> 5 个 GLM 子代理在后续「项目预演」中能**理解各自职责、并行分工、调度依赖**。
-> 每个 stage 是「委派单元」：一个 stage = 一个子代理的独立任务（或主模型亲自处理）。
+[![CI](https://github.com/wilberforce1900/hotspot-pulse/actions/workflows/ci.yml/badge.svg)](https://github.com/wilberforce1900/hotspot-pulse/actions/workflows/ci.yml)
+![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
+
+输入一个话题 tag，输出关联话题网络、短期增长预测（含置信区间）、情绪分布、
+区域热度，并渲染热力网图。**纯 Python 标准库、零第三方依赖**，离线 MOCK 即可
+端到端跑通；数据源适配器（RSS / GDELT / 自托管 RSSHub）开箱可选。
+
+![样例热力网图](docs/sample-graph.svg)
+
+> 架构说明：本文前身为多代理协作预演的设计文档，阶段=委派单元的分工表述
+> 保留在 §2–§5，现已全部落地为 `hotspot_pulse/` 包实现。
 
 ---
 
 ## 快速开始
 
 ```bash
-cd dsh-hotspot-predictor
-python main.py "AI芯片 24小时 中国"          # 直接跑（默认 MOCK + LINEAR，零依赖）
+cd hotspot-pulse
+python main.py "AI芯片 24小时 中国"          # 直接跑（默认 MOCK + DAMPED，零依赖）
 python -m hotspot_pulse.cli "AI芯片"        # 等价的模块方式调用
 # 或安装为命令：
 pip install . && hotspot "AI芯片"
@@ -27,7 +35,7 @@ python -m unittest discover -s tests -v
 ## 0. 目录结构
 
 ```
-dsh-hotspot-predictor/
+hotspot-pulse/
 ├── main.py                    # 兼容薄壳入口（转发到 hotspot_pulse.cli）
 ├── pyproject.toml             # 打包配置（pip install . → hotspot 命令）
 ├── hotspot_pulse/             # 主包
@@ -228,6 +236,10 @@ python main.py "AI芯片 24小时" --config configs/gdelt.example.json
 - ⚠️ **数据出境提示**：查询词（即你的 tag）会发送至美国 `api.gdeltproject.org`。
   选择本源即视为接受该行为；介意者请用方案 A。
 - 网络防护与 RSS 一致（超时/体积上限/非 JSON 降级），离线时自动降级为警告。
+
+> **真实源的区域说明**：RSS 源不带地域字段，默认配置的 `region_mapper: mock`
+> 会按确定性哈希把帖分到演示区域池（仅示意）。要诚实的「未知」请加
+> `"region_mapper": {"mode": "field"}`；GDELT 源自带 `sourcecountry`，无需处理。
 
 ## 7. 可扩展性与非功能
 
